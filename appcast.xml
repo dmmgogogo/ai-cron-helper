@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>AI 定时任务</title>
+    <item>
+      <title>0.2.0</title>
+      <pubDate>Mon, 26 Oct 2026 04:30:24 +0000</pubDate>
+      <sparkle:version>202610261230</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description sparkle:format="markdown"><![CDATA[
+## 新增
+- **自动更新**：面板底部新增「检查更新」；后台每天自动检查一次，发现新版本时菜单栏图标出现小圆点、面板顶部提示，点开即可查看更新内容并一键安装、自动重启。
+- 更新包使用 EdDSA 签名校验，签名不对的安装包会被拒绝。
+- 面板底部显示当前版本号。
+
+## 说明
+- 从 v0.1.x 升级需要手动安装一次本版本，之后的版本都可以在 App 内直接更新。
+]]></description>
+      <enclosure url="https://github.com/dmmgogogo/ai-cron-helper/releases/download/v0.2.0/AICronHelper-0.2.0.dmg" type="application/octet-stream" sparkle:edSignature="kpDdD0FmaF9fVVwmpAU0OPY7w9i+6FwGGJMAtkcVZNZXj5T1H01PHE6hUpU31c6IZVt0eEzjHDaLuvCvPspUBw==" length="1990070"/>
+    </item>
+  </channel>
+</rss>
