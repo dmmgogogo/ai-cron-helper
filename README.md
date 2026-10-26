@@ -43,6 +43,26 @@ scripts/build.sh
 swift test
 ```
 
+## 自动更新
+
+用 [Sparkle](https://sparkle-project.org) 实现：面板底部「检查更新」手动检查，后台每天自动检查一次。后台发现新版本时不弹窗，菜单栏图标出现小圆点、面板顶部出现提示，点开后显示更新说明，一键下载、安装并重启。
+
+- 更新源：仓库根目录的 `appcast.xml`（App 从 `raw.githubusercontent.com` 读取），安装包放在 GitHub Release
+- 安装包用 EdDSA 签名，App 内置公钥校验，签名不对会拒绝安装
+- 签名私钥**不进仓库**，只保存在发布者本机，务必备份：丢失后已安装的 App 无法再收到更新
+
+## 发布新版本
+
+1. 首次发布前，在仓库根目录建 `.release.env`（已在 `.gitignore` 里，不会提交），写入签名私钥路径：`SPARKLE_KEY_FILE=<私钥文件路径>`
+2. 写更新说明 `docs/release-notes/<版本>.md`（只写改了什么，会显示在 App 的更新窗口里），提交并推送
+3. 运行：
+
+```bash
+scripts/release.sh 0.2.1 docs/release-notes/0.2.1.md
+```
+
+脚本会检查工作区干净且与 `origin/main` 一致，然后打包、签名、发布 GitHub Release，最后把新版本写进 `appcast.xml` 并推送。
+
 ## 目前不做
 
 - 不计算下次触发时间（只显示可读的调度描述）

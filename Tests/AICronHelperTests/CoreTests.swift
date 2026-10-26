@@ -258,3 +258,41 @@ final class CodexRunIndexTests: XCTestCase {
         XCTAssertEqual(index.lastRun["live"], Date(timeIntervalSince1970: 1_792_854_261.825))
     }
 }
+
+final class ProtectedPathsTests: XCTestCase {
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    func testDetectsProtectedFolders() {
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Documents"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Documents/work/a.log"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Desktop/x.sh"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Downloads/y"))
+        XCTAssertTrue(ProtectedPaths.contains("~/Documents/z.log"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Library/../Documents/z.log"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/documents/大小写.log"))
+        XCTAssertTrue(ProtectedPaths.contains(home + "/Library/Mobile Documents/com~apple~CloudDocs/a.log"))
+        XCTAssertTrue(ProtectedPaths.contains("/Volumes/Backup/job.log"))
+    }
+
+    func testIgnoresOtherFolders() {
+        XCTAssertFalse(ProtectedPaths.contains(home + "/DocumentsX/a.log"))
+        XCTAssertFalse(ProtectedPaths.contains(home + "/Library/Logs/a.log"))
+        XCTAssertFalse(ProtectedPaths.contains("/tmp/Documents/a.log"))
+        XCTAssertFalse(ProtectedPaths.contains(home + "/.codex/state_5.sqlite"))
+    }
+
+    func testCrontabLogInProtectedFolderIsNotRead() {
+        let jobs = CronCollector.parse("0 */6 * * * /opt/bin/bench backup >> \(home)/Documents/proj/logs/backup.log 2>&1")
+        XCTAssertNil(jobs.first?.lastActivity)
+        XCTAssertEqual(jobs.first?.lastActivityLabel, "日志受保护")
+    }
+
+    func testLaunchdScriptInProtectedFolderUsesNameWithoutChecking() {
+        // 路径带空格且不存在：若去检查文件会被当成内联脚本；受保护路径应直接取文件名
+        let plist: [String: Any] = ["ProgramArguments": ["/bin/bash", home + "/Documents/某 项目/hourly report.sh"]]
+        XCTAssertEqual(LaunchdCollector.programName(plist, fallback: "l"), "hourly report.sh")
+        XCTAssertEqual(Collector.logLabel(home + "/Documents/a.log"), "日志受保护")
+        XCTAssertEqual(Collector.logLabel("/tmp/a.log"), "日志更新")
+        XCTAssertEqual(Collector.logLabel(nil), "日志更新")
+    }
+}

@@ -27,8 +27,44 @@ enum Collector {
         isoFractional.date(from: s) ?? isoPlain.date(from: s)
     }
 
+    /// 受保护文件夹里的文件不读，直接返回 nil（见 ProtectedPaths）
     static func modificationDate(_ path: String) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        guard !ProtectedPaths.contains(path) else { return nil }
+        return (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+    }
+
+    /// 日志修改时间的口径说明：日志在受保护文件夹时不读取
+    static func logLabel(_ path: String?) -> String {
+        path.map(ProtectedPaths.contains) == true ? "日志受保护" : "日志更新"
+    }
+}
+
+/// macOS 的受保护位置（文稿 / 桌面 / 下载 / iCloud 云盘 / 外接与网络宗卷）：App 一碰里面的文件就弹授权框，
+/// 而 ad-hoc 签名每个版本都会被系统当成新 App 再问一次。落在这些位置的路径只按字符串判断，不做任何文件访问。
+enum ProtectedPaths {
+    // 注意：URL(fileURLWithPath:) 和 appendingPathComponent(_:) 不带 isDirectory 时会去文件系统查是否为目录，
+    // 一样会触发授权框，所以这里全部用字符串拼接
+    static let roots = ["Documents", "Desktop", "Downloads", "Library/Mobile Documents"].map {
+        normalize(Collector.home.path + "/" + $0).lowercased()
+    } + ["/volumes"]
+
+    /// 只做字符串处理（展开 ~、消掉 . 和 ..），不访问文件系统；APFS 默认不区分大小写，按小写比较
+    static func contains(_ path: String) -> Bool {
+        let p = normalize((path as NSString).expandingTildeInPath).lowercased()
+        return roots.contains { p == $0 || p.hasPrefix($0 + "/") }
+    }
+
+    static func normalize(_ path: String) -> String {
+        var parts: [Substring] = []
+        for part in path.split(separator: "/") {
+            if part == "." { continue }
+            if part == ".." {
+                if !parts.isEmpty { parts.removeLast() }
+                continue
+            }
+            parts.append(part)
+        }
+        return "/" + parts.joined(separator: "/")
     }
 }
 
@@ -121,7 +157,7 @@ enum ClaudeCollector {
                 status: status,
                 lastActivity: lastRun,
                 lastActivityLabel: "上次运行",
-                detail: cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
+                detail: cwd.map { ($0 as NSString).lastPathComponent },
                 tag: nil,
                 issue: nil,
                 filePath: t["filePath"] as? String,
@@ -197,7 +233,7 @@ enum CodexCollector {
                 status: status,
                 lastActivity: lastActivity,
                 lastActivityLabel: label,
-                detail: cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
+                detail: cwd.map { ($0 as NSString).lastPathComponent },
                 tag: kind == "heartbeat" ? "心跳" : nil,
                 issue: statusRaw.isEmpty || statusRaw == "ACTIVE" || statusRaw == "PAUSED" ? nil : "状态 \(statusRaw)",
                 filePath: item.file.path,
@@ -395,7 +431,7 @@ enum LaunchdCollector {
                     rawSchedule: rawSchedule(plist),
                     status: loaded && !disabled ? .active : .paused,
                     lastActivity: logPath.flatMap(Collector.modificationDate),
-                    lastActivityLabel: "日志更新",
+                    lastActivityLabel: Collector.logLabel(logPath),
                     detail: detail,
                     tag: nil,
                     issue: issue,
@@ -438,8 +474,11 @@ enum LaunchdCollector {
         let interpreters: Set<String> = ["bash", "zsh", "sh", "env", "node", "ruby", "perl", "osascript", "caffeinate"]
         for arg in args {
             if arg.hasPrefix("-") { continue }
-            // 路径本身可能含空格（如 Application Support），以文件是否存在区分路径和内联命令
-            let isFile = arg.hasPrefix("/") && FileManager.default.fileExists(atPath: arg)
+            // 路径本身可能含空格（如 Application Support），以文件是否存在区分路径和内联命令；
+            // 受保护位置里的路径不去检查（会弹授权框），直接当作路径；
+            // 用 attributesOfItem 而不是 fileExists：前者不跟随软链接，链到受保护位置的脚本也不会被访问
+            let isFile = arg.hasPrefix("/")
+                && (ProtectedPaths.contains(arg) || (try? FileManager.default.attributesOfItem(atPath: arg)) != nil)
             if !isFile, arg.contains(" ") || arg.contains("\n") { return "内联脚本" }
             let base = (arg as NSString).lastPathComponent
             if interpreters.contains(base) || base.hasPrefix("python") { continue }
@@ -508,10 +547,9 @@ enum CronCollector {
                 if !comment.isEmpty { name = comment }
             }
 
-            var logDate: Date?
+            var logPath: String?
             if let m = command.range(of: #">>?\s*(/[^\s;&|]+)"#, options: .regularExpression) {
-                let path = command[m].drop(while: { $0 == ">" || $0.isWhitespace })
-                logDate = Collector.modificationDate(String(path))
+                logPath = String(command[m].drop(while: { $0 == ">" || $0.isWhitespace }))
             }
 
             jobs.append(ScheduledJob(
@@ -521,8 +559,8 @@ enum CronCollector {
                 schedule: info.text,
                 rawSchedule: expr,
                 status: .active,
-                lastActivity: logDate,
-                lastActivityLabel: "日志更新",
+                lastActivity: logPath.flatMap(Collector.modificationDate),
+                lastActivityLabel: Collector.logLabel(logPath),
                 detail: workingDir(command),
                 tag: nil,
                 issue: nil,

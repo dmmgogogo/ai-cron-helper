@@ -3,6 +3,8 @@ build/
 dist/
 .swiftpm/
 .DS_Store
+# 本机发布配置（签名私钥路径等），不提交
+.release.env
 
 # 全局 gitignore 忽略了 app、scripts 目录，本仓库需要它们
 !Sources/AICronHelper/App/

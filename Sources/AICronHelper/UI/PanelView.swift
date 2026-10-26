@@ -24,6 +24,7 @@ enum StatusFilter: String, CaseIterable, Identifiable {
 
 struct PanelView: View {
     @EnvironmentObject private var store: JobStore
+    @EnvironmentObject private var updater: UpdateController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var filter: StatusFilter = .active
     @State private var sourceFilter: JobSource?
@@ -40,6 +41,7 @@ struct PanelView: View {
                 .frame(height: 260)
             VStack(spacing: 0) {
                 header
+                if let version = updater.availableVersion { updateBanner(version) }
                 hero
                 filterBar
                 Rectangle().fill(Palette.hairline).frame(height: 1)
@@ -214,12 +216,45 @@ struct PanelView: View {
 
     // MARK: 底栏
 
+    private func updateBanner(_ version: String) -> some View {
+        Button { updater.checkForUpdates() } label: {
+            HStack(spacing: 8) {
+                Circle().fill(JobSource.claudeCode.tint).frame(width: 6, height: 6)
+                Text("发现新版本 v\(version)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.text)
+                Spacer()
+                Text("查看更新")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.sub)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Palette.dim)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("发现新版本 v\(version)，查看更新")
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+    }
+
     private var footer: some View {
         HStack(spacing: 12) {
-            Text(store.lastRefresh.map { "更新于 \(Self.clock.string(from: $0)) · 每分钟" } ?? "读取中…")
+            Text("v\(updater.currentVersion) · " + (store.lastRefresh.map { "更新于 \(Self.clock.string(from: $0))" } ?? "读取中…"))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Palette.dim)
-            Spacer()
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Button("检查更新") { updater.checkForUpdates() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(updater.canCheckForUpdates ? Palette.sub : Palette.dim)
+                .disabled(!updater.canCheckForUpdates)
+                .help(updater.canCheckForUpdates ? "检查 GitHub 上是否有新版本" : "正在检查更新，或有待处理的更新")
             LaunchAtLoginToggle()
             Button("退出") { NSApp.terminate(nil) }
                 .buttonStyle(.plain)
@@ -234,7 +269,7 @@ struct PanelView: View {
 
     private static let clock: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
+        f.dateFormat = "HH:mm"
         return f
     }()
 
@@ -419,7 +454,9 @@ struct JobRow: View {
     }
 
     private func reveal() {
-        guard let path = job.filePath, FileManager.default.fileExists(atPath: path) else { return }
+        // 受保护位置不先检查存在性（会弹授权框），直接交给 Finder
+        guard let path = job.filePath,
+              ProtectedPaths.contains(path) || FileManager.default.fileExists(atPath: path) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 }
@@ -456,6 +493,7 @@ struct RefreshButton: View {
         }
         .buttonStyle(PressableStyle())
         .help("立即刷新")
+        .accessibilityLabel("立即刷新")
         .onChange(of: spinning) { _, isSpinning in
             if isSpinning { withAnimation(.easeOut(duration: 0.6)) { angle += 360 } }
         }
