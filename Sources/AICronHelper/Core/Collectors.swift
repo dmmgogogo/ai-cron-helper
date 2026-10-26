@@ -230,14 +230,11 @@ struct CodexRunIndex {
             index.error = "未找到 Codex 运行记录库，上次运行时间不可用"
             return index
         }
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            sqlite3_close(db)
+        guard let db = openReadOnly(dbPath) else {
             index.error = "Codex 运行记录库打开失败，上次运行时间不可用"
             return index
         }
         defer { sqlite3_close(db) }
-        sqlite3_busy_timeout(db, 1500)
 
         var stmt: OpaquePointer?
         let sql = "SELECT substr(title, 1, 400), created_at_ms FROM threads WHERE thread_source = 'automation'"
@@ -250,7 +247,7 @@ struct CodexRunIndex {
                 if date > index.lastRun[id] ?? .distantPast { index.lastRun[id] = date }
             }
         } else {
-            index.error = "Codex 运行记录库结构已变化，上次运行时间不可用"
+            index.error = "Codex 运行记录读取失败（\(String(cString: sqlite3_errmsg(db)))），上次运行时间不可用"
         }
         sqlite3_finalize(stmt)
 
@@ -269,6 +266,31 @@ struct CodexRunIndex {
             sqlite3_finalize(q)
         }
         return index
+    }
+
+    /// 只读打开 Codex 的线程库。
+    /// 库是 WAL 模式：Codex 关掉所有连接后 -wal/-shm 会被删掉，此时只读连接建不了 -shm，查询报 SQLITE_CANTOPEN。
+    /// 没有 -wal 说明没有未写回主库的数据，改用 immutable=1 直接读主库文件。
+    /// 不用读写方式打开：读写连接关闭时会做 checkpoint，等于改写了 Codex 的库。
+    static func openReadOnly(_ path: String) -> OpaquePointer? {
+        let walExists = FileManager.default.fileExists(atPath: path + "-wal")
+        var db: OpaquePointer?
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+            sqlite3_busy_timeout(db, 1500)
+            let rc = sqlite3_exec(db, "SELECT 1 FROM sqlite_master LIMIT 1", nil, nil, nil)
+            // 其它错误交给后面的查询报出具体原因
+            if rc != SQLITE_CANTOPEN || walExists { return db }
+        }
+        sqlite3_close(db)
+        db = nil
+        // 有 -wal 时主库文件可能缺最新数据，不能用 immutable 读
+        guard !walExists else { return nil }
+        let uri = URL(fileURLWithPath: path).absoluteString + "?immutable=1"
+        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        return db
     }
 
     /// 自动化线程标题形如 "Automation: 名称\nAutomation ID: xxx\n..."

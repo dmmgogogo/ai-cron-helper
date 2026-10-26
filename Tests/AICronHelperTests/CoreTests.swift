@@ -1,3 +1,4 @@
+import SQLite3
 import XCTest
 @testable import AICronHelper
 
@@ -197,5 +198,63 @@ final class CollectorParsingTests: XCTestCase {
         XCTAssertEqual(jobs[1].name, "once")
         XCTAssertTrue(jobs[1].schedule.hasPrefix("一次性 · "))
         XCTAssertNotNil(jobs[0].lastActivity)
+    }
+}
+
+final class CodexRunIndexTests: XCTestCase {
+    /// 复现 Codex 关掉所有连接后的状态：WAL 模式的库，旁边没有 -wal / -shm 文件
+    func testReadsWALDatabaseWithoutSidecarFiles() throws {
+        // 路径带空格和中文，顺带验证 immutable 打开用的 URI 编码
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("码 库 \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("state_5.sqlite").path
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        let sql = """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE threads(id TEXT, title TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, thread_source TEXT);
+        INSERT INTO threads VALUES('t1', 'Automation: 示例' || char(10) || 'Automation ID: demo', 1792854261825, 1792854261825, 'automation');
+        INSERT INTO threads VALUES('hb', '普通线程', 1, 1792900000000, 'user');
+        """
+        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        // 关库时 WAL 已写回主库；系统 SQLite 默认保留 -wal/-shm，手动删掉以模拟 Codex 关库后的状态
+        try? FileManager.default.removeItem(atPath: path + "-wal")
+        try? FileManager.default.removeItem(atPath: path + "-shm")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + "-wal"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + "-shm"))
+
+        let index = CodexRunIndex.load(codexHome: dir, threadIDs: ["hb"])
+        XCTAssertNil(index.error)
+        XCTAssertEqual(index.lastRun["demo"], Date(timeIntervalSince1970: 1_792_854_261.825))
+        XCTAssertEqual(index.threadActivity["hb"], Date(timeIntervalSince1970: 1_792_900_000))
+        // 只读：不能在 Codex 的目录里留下 -wal / -shm
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + "-wal"))
+    }
+
+    /// Codex 正开着库、最新记录还在 -wal 里没写回主库：必须走正常只读路径读到它
+    func testReadsRowsStillInWAL() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("state_5.sqlite").path
+
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &writer), SQLITE_OK)
+        defer { sqlite3_close(writer) }
+        let sql = """
+        PRAGMA journal_mode=WAL;
+        PRAGMA wal_autocheckpoint=0;
+        CREATE TABLE threads(id TEXT, title TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, thread_source TEXT);
+        INSERT INTO threads VALUES('t1', 'Automation: 示例' || char(10) || 'Automation ID: live', 1792854261825, 1792854261825, 'automation');
+        """
+        XCTAssertEqual(sqlite3_exec(writer, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path + "-wal"))
+
+        let index = CodexRunIndex.load(codexHome: dir, threadIDs: [])
+        XCTAssertNil(index.error)
+        XCTAssertEqual(index.lastRun["live"], Date(timeIntervalSince1970: 1_792_854_261.825))
     }
 }
