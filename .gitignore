@@ -1,0 +1,9 @@
+.build/
+build/
+dist/
+.swiftpm/
+.DS_Store
+
+# 全局 gitignore 忽略了 app、scripts 目录，本仓库需要它们
+!Sources/AICronHelper/App/
+!scripts/
